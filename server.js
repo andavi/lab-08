@@ -4,6 +4,7 @@
 const express = require('express')
 const cors = require('cors')
 const superagent = require('superagent')
+const pg = require('pg');
 
 // Load env vars;
 require('dotenv').config()
@@ -14,6 +15,11 @@ const PORT = process.env.PORT || 3000
 const app = express()
 
 app.use(cors())
+
+// Postgres
+const client = new pg.Client(process.env.DATABASE_URL);
+client.connect();
+client.on('error', err => console.error(err));
 
 // Error handling
 function handleError (res) {
@@ -123,7 +129,7 @@ function searchMovies(query) {
   const url = `https://api.themoviedb.org/3/search/movie?api_key=${process.env.MOVIE_API_KEY}&query=${query.search_query}`;
   return superagent.get(url)
     .then(moviesData => {
-      console.log(moviesData.body);
+      // console.log(moviesData.body);
       return moviesData.body.results.map(movie => new Movie(movie));
     })
 }
