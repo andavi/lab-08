@@ -60,10 +60,32 @@ function getLocation (req, res) {
 }
 
 function getWeather (req, res) {
-  return searchForWeather(req.query.data)
-    .then(weatherData => {
-      res.send(weatherData);
-    });
+  const weatherOptions = {
+    tableName: Weather.tableName,
+
+    location: req.query.data.id,
+
+    cacheHit: function(result) {
+      res.send(result.rows);
+    },
+
+    cacheMiss: function() {
+      const url = `https://api.darksky.net/forecast/${process.env.DARKSKY_API_KEY}/${req.query.data.latitude},${req.query.data.longitude}`;
+
+      superagent.get(url)
+        .then(results => {
+          const weatherSummaries = results.body.daily.data.map(day => {
+            const summary = new Weather(day);
+            summary.save(req.query.data.id);
+            return summary;
+          });
+          res.send(weatherSummaries);
+        })
+        .catch(err => handleError(err));
+    }
+  };
+
+  Weather.lookup(weatherOptions);
 }
 
 function getYelp(req, res) {
@@ -79,6 +101,26 @@ function getMovies(req, res) {
       res.send(moviesData);
     });
 }
+
+
+// General lookup function for everything besides location
+// Understanding this function was my "aha" moment
+function lookup(options) {
+  const SQL = `SELECT * FROM ${options.tableName} WHERE location_id=$1;`;
+  const values = [options.location];
+
+  client.query(SQL, values)
+    .then(result => {
+      if (result.rowCount > 0) {
+        options.cacheHit(result);
+      } else {
+        options.cacheMiss();
+      }
+    })
+    .catch(error => handleError(error));
+}
+
+
 
 // Models
 function Location (query, location) {
@@ -115,10 +157,22 @@ Location.prototype = {
   }
 }
 
-function Daily (day) {
+function Weather (day) {
+  this.tableName = 'weathers';
   this.forecast = day.summary
   this.time = new Date(day.time * 1000).toDateString()
 }
+Weather.tableName = 'weathers';
+Weather.lookup = lookup;
+Weather.prototype = {
+  save: function(location_id) {
+    const SQL = `INSERT INTO ${this.tableName} (forecast, time, location_id) VALUES ($1, $2, $3);`;
+    const values = [this.forecast, this.time, location_id];
+
+    client.query(SQL, values);
+  }
+}
+
 
 function Yelp(business) {
   this.name = business.name;
@@ -149,7 +203,7 @@ function searchForWeather(query) {
 
   return superagent.get(url)
     .then(weatherData => {
-      return weatherData.body.daily.data.map(day => new Daily(day));
+      return weatherData.body.daily.data.map(day => new Weather(day));
     })
     .catch(err => console.error(err));
 }
