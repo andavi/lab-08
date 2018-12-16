@@ -22,8 +22,9 @@ client.connect();
 client.on('error', err => console.error(err));
 
 // Error handling
-function handleError (res) {
-  res.status(500).send('Sorry something went wrong!')
+function handleError (err) {
+  // res.status(500).send('Sorry something went wrong!')
+  console.error(err);
 }
 
 // Routes
@@ -32,12 +33,30 @@ app.get('/weather', getWeather)
 app.get('/yelp', getYelp);
 app.get('/movies', getMovies);
 
+
 // Handlers
 function getLocation (req, res) {
-  return searchToLatLong(req.query.data || 'lynwood')
-    .then(locationData => {
-      res.send(locationData);
-    });
+  Location.lookup({
+    tableNmae: Location.tableName,
+
+    query: req.query.data,
+
+    cacheHit: function(result) {
+      res.send(result.rows[0]);
+    },
+
+    cacheMiss: function() {
+      const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${this.query}&key=${process.env.GEOCODE_API_KEY}`;
+
+      return superagent.get(url)
+        .then(result => {
+          const location = new Location(this.query, result.body.results[0]);
+          location.save()
+            .then(location => res.send(location));
+        })
+        .catch(err => handleError(err));
+    }
+  })
 }
 
 function getWeather (req, res) {
@@ -61,12 +80,39 @@ function getMovies(req, res) {
     });
 }
 
-// Constructors
-function Location (location, query) {
+// Models
+function Location (query, location) {
+  this.tableName = 'locations';
   this.search_query = query
   this.formatted_query = location.formatted_address
   this.latitude = location.geometry.location.lat
   this.longitude = location.geometry.location.lng
+}
+Location.lookup = location => {
+  const SQL = `SELECT * FROM locations WHERE search_query=$1`;
+  const values = [location.query];
+
+  return client.query(SQL, values)
+    .then(result => {
+      if(result.rowCount > 0) {
+        location.cacheHit(result);
+      } else {
+        location.cacheMiss();
+      }
+    })
+    .catch(err => handleError(err));
+}
+Location.prototype = {
+  save: function() {
+    const SQL = `INSERT INTO locations (search_query, formatted_query, latitude, longitude) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING id;`;
+    const values = [this.search_query, this.formatted_query, this.latitude, this.longitude];
+
+    return client.query(SQL, values)
+      .then(result => {
+        this.id = result.rows[0].id;
+        return this;
+      });
+  }
 }
 
 function Daily (day) {
@@ -97,18 +143,10 @@ function Movie(movie) {
 }
 
 // Search Functions
-function searchToLatLong(query) {
-  const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${query}&key=${process.env.GEOCODE_API_KEY}`;
-  return superagent.get(url)
-    .then(geoData => {
-      const location = new Location(geoData.body.results[0], query);
-      return location;
-    })
-    .catch(err => console.error(err));
-}
 
 function searchForWeather(query) {
   const url = `https://api.darksky.net/forecast/${process.env.DARKSKY_API_KEY}/${query.latitude},${query.longitude}`;
+
   return superagent.get(url)
     .then(weatherData => {
       return weatherData.body.daily.data.map(day => new Daily(day));
@@ -129,7 +167,6 @@ function searchMovies(query) {
   const url = `https://api.themoviedb.org/3/search/movie?api_key=${process.env.MOVIE_API_KEY}&query=${query.search_query}`;
   return superagent.get(url)
     .then(moviesData => {
-      // console.log(moviesData.body);
       return moviesData.body.results.map(movie => new Movie(movie));
     })
 }

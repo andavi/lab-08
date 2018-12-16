@@ -1,4 +1,6 @@
 DROP TABLE IF EXISTS weathers;
+DROP TABLE IF EXISTS yelps;
+DROP TABLE IF EXISTS movies;
 DROP TABLE IF EXISTS locations;
 
 CREATE TABLE locations ( 
@@ -16,3 +18,26 @@ CREATE TABLE weathers (
     location_id INTEGER NOT NULL,
     FOREIGN KEY (location_id) REFERENCES locations (id)
   );
+
+CREATE TABLE yelps ( 
+    id SERIAL PRIMARY KEY, 
+    name VARCHAR(255), 
+    price CHAR(5),
+    rating NUMERIC(2,1),
+    url VARCHAR(255), 
+    location_id INTEGER NOT NULL,
+    FOREIGN KEY (location_id) REFERENCES locations (id)
+  );
+
+CREATE TABLE movies (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(255),
+    overview TEXT,
+    average_votes REAL,
+    total_votes INTEGER,
+    image_url VARCHAR(255),
+    popularity NUMERIC(6,4),
+    released_on CHAR(10),
+    location_id INTEGER NOT NULL,
+    FOREIGN KEY (location_id) REFERENCES locations (id)
+);
