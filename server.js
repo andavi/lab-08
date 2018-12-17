@@ -22,9 +22,9 @@ client.connect();
 client.on('error', err => console.error(err));
 
 // Error handling
-function handleError (err) {
-  // res.status(500).send('Sorry something went wrong!')
+function handleError (err, res) {
   console.error(err);
+  if (res) res.status(500).send('Sorry something went wrong!')
 }
 
 // Routes
@@ -54,7 +54,7 @@ function getLocation (req, res) {
           location.save()
             .then(location => res.send(location));
         })
-        .catch(err => handleError(err));
+        .catch(err => handleError(err, res));
     }
   })
 }
@@ -81,18 +81,39 @@ function getWeather (req, res) {
           });
           res.send(weatherSummaries);
         })
-        .catch(err => handleError(err));
+        .catch(err => handleError(err, res));
     }
   };
-
   Weather.lookup(weatherOptions);
 }
 
 function getYelp(req, res) {
-  return searchYelp(req.query.data)
-    .then(yelpData => {
-      res.send(yelpData);
-    });
+  const yelpOptions = {
+    tableName: Yelp.tableName,
+
+    location: req.query.data.id,
+
+    cacheHit: function(result) {
+      res.send(result.rows);
+    },
+
+    cacheMiss: function() {
+      const url = `https://api.yelp.com/v3/businesses/search?term=restaurants&latitude=${req.query.data.latitude}&longitude=${req.query.data.longitude}`;
+
+      superagent.get(url)
+        .set('Authorization', `Bearer ${process.env.YELP_API_KEY}`)
+        .then(results => {
+          const yelpSummaries = results.body.businesses.map(business => {
+            const summary = new Yelp(business);
+            summary.save(req.query.data.id);
+            return summary;
+          });
+          res.send(yelpSummaries);
+        })
+        .catch(err => handleError(err, res));
+    }
+  };
+  Yelp.lookup(yelpOptions);
 }
 
 function getMovies(req, res) {
@@ -121,10 +142,9 @@ function lookup(options) {
 }
 
 
-
 // Models
 function Location (query, location) {
-  this.tableName = 'locations';
+  // this.tableName = 'locations';
   this.search_query = query
   this.formatted_query = location.formatted_address
   this.latitude = location.geometry.location.lat
@@ -158,7 +178,7 @@ Location.prototype = {
 }
 
 function Weather (day) {
-  this.tableName = 'weathers';
+  // this.tableName = 'weathers';
   this.forecast = day.summary
   this.time = new Date(day.time * 1000).toDateString()
 }
@@ -166,13 +186,12 @@ Weather.tableName = 'weathers';
 Weather.lookup = lookup;
 Weather.prototype = {
   save: function(location_id) {
-    const SQL = `INSERT INTO ${this.tableName} (forecast, time, location_id) VALUES ($1, $2, $3);`;
+    const SQL = `INSERT INTO ${Weather.tableName} (forecast, time, location_id) VALUES ($1, $2, $3);`;
     const values = [this.forecast, this.time, location_id];
 
     client.query(SQL, values);
   }
 }
-
 
 function Yelp(business) {
   this.name = business.name;
@@ -180,6 +199,16 @@ function Yelp(business) {
   this.price = business.price;
   this.rating = business.rating;
   this.url = business.url;
+}
+Yelp.tableName = 'yelps';
+Yelp.lookup = lookup;
+Yelp.prototype = {
+  save: function(location_id) {
+    const SQL = `INSERT INTO ${Yelp.tableName} (name, price, rating, url, location_id) VALUES ($1, $2, $3, $4, $5);`;
+    const values = [this.name, this.price, this.rating, this.url, location_id];
+
+    client.query(SQL, values);
+  }
 }
 
 function Movie(movie) {
@@ -197,17 +226,6 @@ function Movie(movie) {
 }
 
 // Search Functions
-
-function searchForWeather(query) {
-  const url = `https://api.darksky.net/forecast/${process.env.DARKSKY_API_KEY}/${query.latitude},${query.longitude}`;
-
-  return superagent.get(url)
-    .then(weatherData => {
-      return weatherData.body.daily.data.map(day => new Weather(day));
-    })
-    .catch(err => console.error(err));
-}
-
 function searchYelp(query) {
   const url = `https://api.yelp.com/v3/businesses/search?term=restaurants&latitude=${query.latitude}&longitude=${query.longitude}`;
   return superagent.get(url)  
