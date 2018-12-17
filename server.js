@@ -14,7 +14,7 @@ const PORT = process.env.PORT || 3000
 // App
 const app = express()
 
-app.use(cors())
+app.use(cors());
 
 // Postgres
 const client = new pg.Client(process.env.DATABASE_URL);
@@ -117,10 +117,31 @@ function getYelp(req, res) {
 }
 
 function getMovies(req, res) {
-  return searchMovies(req.query.data)
-    .then(moviesData => {
-      res.send(moviesData);
-    });
+  const movieOptions = {
+    tableName: Movie.tableName,
+
+    location: req.query.data.id,
+
+    cacheHit: function(result) {
+      res.send(result.rows);
+    },
+
+    cacheMiss: function() {
+      const url = `https://api.themoviedb.org/3/search/movie?api_key=${process.env.MOVIE_API_KEY}&query=${req.query.data.search_query}`;
+
+      superagent.get(url)
+        .then(results => {
+          const movieSummaries = results.body.results.map(movie => {
+            const summary = new Movie(movie);
+            summary.save(req.query.data.id);
+            return summary;
+          });
+          res.send(movieSummaries);
+        })
+        .catch(err => handleError(err, res));
+    }
+  };
+  Movie.lookup(movieOptions);
 }
 
 
@@ -224,24 +245,17 @@ function Movie(movie) {
   this.popularity = movie.popularity;
   this.released_on = movie.release_date;
 }
+Movie.tableName = 'movies';
+Movie.lookup = lookup;
+Movie.prototype = {
+  save: function(location_id) {
+    const SQL = `INSERT INTO ${Movie.tableName} (title, overview, average_votes, total_votes, image_url, popularity, released_on, location_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8);`;
+    const values = [this.title, this.overview, this.average_votes, this.total_votes, this.image_url, this.popularity, this.released_on, location_id];
 
-// Search Functions
-function searchYelp(query) {
-  const url = `https://api.yelp.com/v3/businesses/search?term=restaurants&latitude=${query.latitude}&longitude=${query.longitude}`;
-  return superagent.get(url)  
-    .set('Authorization', `Bearer ${process.env.YELP_API_KEY}`)
-    .then(yelpData => {
-      return yelpData.body.businesses.map(business => new Yelp(business));
-    });
+    client.query(SQL, values);
+  }
 }
 
-function searchMovies(query) {
-  const url = `https://api.themoviedb.org/3/search/movie?api_key=${process.env.MOVIE_API_KEY}&query=${query.search_query}`;
-  return superagent.get(url)
-    .then(moviesData => {
-      return moviesData.body.results.map(movie => new Movie(movie));
-    })
-}
 
 // Bad path
 // app.get('/*', function(req, res) {
